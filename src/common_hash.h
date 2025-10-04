@@ -64,12 +64,16 @@ static void h_add(HashMap *m, const char *key, long delta) {
     }
     // novo
     HashNode *n = (HashNode*)calloc(1, sizeof(HashNode));
-    n->key = strdup(key);
+    // duplicação de string sem usar strdup (POSIX)
+    size_t len = strlen(key) + 1;
+    n->key = (char*)malloc(len);
+    if (n->key) memcpy(n->key, key, len);
     n->count = delta;
     n->next = m->buckets[h];
     m->buckets[h] = n;
     m->nitems++;
 }
+
 
 // Itera (para serializar/merge)
 typedef void (*h_iter_fn)(const char *key, long count, void *ud);
