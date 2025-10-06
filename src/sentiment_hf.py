@@ -23,7 +23,7 @@ from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassifica
 import torch
 import re
 
-# Caminho do arquivo com as músicas (pré-processado)
+# Caminho do arquivo com as músicas (pré-processado pelo preprocess_csv.py)
 DATA = Path("data/songs.tsv")
 
 # ---------------------------------------------------------------
@@ -31,7 +31,7 @@ DATA = Path("data/songs.tsv")
 # ---------------------------------------------------------------
 
 def detect_device(arg_device: str | None) -> str:
-    """Detecta automaticamente se há GPU disponível."""
+    """Se usuário passou --device, respeita; caso contrário, usa cuda se disponível."""
     if arg_device:
         return arg_device
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -39,8 +39,9 @@ def detect_device(arg_device: str | None) -> str:
 
 def load_pipeline(model_name: str, device: str, batch_size: int):
     """
-    Carrega modelo e tokenizer da Hugging Face e cria o pipeline de análise de sentimento.
-    use_fast=False evita dependências extras como tiktoken em alguns modelos.
+    Cria pipeline de análise de sentimento do HF:
+    - use_fast=False: evita dependências extras (ex.: tiktoken) em alguns tokenizers.
+    - truncation+max_length=512: limita tamanho p/ estabilidade em CPU/GPU.
     """
     tok = AutoTokenizer.from_pretrained(model_name, use_fast=False)
     mdl = AutoModelForSequenceClassification.from_pretrained(model_name)
@@ -48,9 +49,9 @@ def load_pipeline(model_name: str, device: str, batch_size: int):
         "sentiment-analysis",
         model=mdl,
         tokenizer=tok,
-        device=0 if (device == "cuda") else -1,
-        truncation=True,        # corta textos longos automaticamente
-        max_length=512,         # limite seguro p/ modelos base
+        device=0 if (device == "cuda") else -1,  # -1 = CPU
+        truncation=True,
+        max_length=512,
         batch_size=batch_size
     )
     return pipe
@@ -58,10 +59,9 @@ def load_pipeline(model_name: str, device: str, batch_size: int):
 
 def _pick_label(pred):
     """
-    Extrai a label principal do resultado retornado pelo pipeline:
-      - Se for dict: {'label': 'POSITIVE', 'score': 0.98}
-      - Se for list: [{'label': 'NEGATIVE','score':0.1}, {...}]
-    Retorna a label de maior score.
+    Extrai a 'label' principal independente do formato:
+      - dict {'label': 'POSITIVE', 'score': ...}
+      - list [{'label': 'NEGATIVE','score':...}, ...] → pega a de maior score
     """
     if isinstance(pred, dict) and 'label' in pred:
         return pred['label']
@@ -73,16 +73,12 @@ def _pick_label(pred):
 
 def _normalize_label_to_pt(label_raw: str) -> str:
     """
-    Converte rótulos variados de diferentes modelos HF
-    para as classes finais: Positiva / Neutra / Negativa.
-    Aceita:
-      - 'POSITIVE' / 'NEGATIVE' / 'NEUTRAL'
-      - 'LABEL_0' / 'LABEL_1' / 'LABEL_2'
-      - '1 star' ... '5 stars' (modelos tipo nlptown)
+    Normaliza rótulos de diferentes modelos para {Positiva, Neutra, Negativa}.
+    Suporta também modelos de 5 estrelas (nlptown), mapeando:
+      <=2 → Negativa, 3 → Neutra, >=4 → Positiva.
     """
     s = str(label_raw).strip().lower()
 
-    # Mapeamentos diretos
     base_map = {
         'positive': 'Positiva',
         'pos': 'Positiva',
@@ -90,14 +86,14 @@ def _normalize_label_to_pt(label_raw: str) -> str:
         'neu': 'Neutra',
         'negative': 'Negativa',
         'neg': 'Negativa',
-        'label_0': 'Negativa',
+        'label_0': 'Negativa', // alguns modelos indexados
         'label_1': 'Neutra',
         'label_2': 'Positiva',
     }
     if s in base_map:
         return base_map[s]
 
-    # Modelos de estrelas (1–5)
+    # Modelos baseados em "stars"
     if 'star' in s:
         m = re.search(r'(\d+)', s)
         if m:
@@ -109,12 +105,11 @@ def _normalize_label_to_pt(label_raw: str) -> str:
             else:
                 return 'Positiva'
 
-    # Caso nada combine
     return 'Neutra'
 
 
 def batch_iter(lines, batch):
-    """Agrupa elementos de um iterável em lotes (batches)."""
+    """Agrupa itens de um iterável em lotes de tamanho 'batch'."""
     buf = []
     for x in lines:
         buf.append(x)
@@ -143,14 +138,14 @@ def main():
     outp = Path(args.out)
     outp.parent.mkdir(parents=True, exist_ok=True)
 
-    # Carrega o modelo e o pipeline
+    # Carrega pipeline uma vez (modelo + tokenizer) e reaproveita durante todo o loop
     pipe = load_pipeline(args.model, device, args.batch)
 
     counts = {"Positiva":0, "Neutra":0, "Negativa":0}
     processed = 0
     seen = 0
 
-    # Gerador que lê o arquivo e produz textos (letras)
+    # Gerador que lê 'data/songs.tsv' e rende somente o campo 'text'
     def read_texts():
         nonlocal seen, processed
         with DATA.open("r", encoding="utf-8") as fin:
@@ -169,7 +164,7 @@ def main():
                     continue
                 yield text
 
-    # Loop principal: lê em lotes, classifica e conta resultados
+    # Loop principal: lê em lotes → chama pipeline → contabiliza classes
     for texts in tqdm(batch_iter(read_texts(), args.batch), desc=f"sentiment[{device}]"):
         res = pipe(texts)
         for r in res:
@@ -177,7 +172,7 @@ def main():
             counts[label] += 1
             processed += 1
 
-    # Salva resultado final
+    # Persistimos as contagens finais para integração com BI/relatório
     with outp.open("w", encoding="utf-8") as fo:
         fo.write("class;count\n")
         for k in ("Positiva","Neutra","Negativa"):

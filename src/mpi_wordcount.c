@@ -1,4 +1,3 @@
-// mpi_wordcount.c
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,9 +6,9 @@
 #include "common_hash.h"
 
 #define LINE_MAX 131072  // buffer por linha (128KB)
-#define BUF_CHUNK 65536  // para serialização
+#define BUF_CHUNK 65536  // bloco para crescer o buffer de serialização
 
-// Pequena lista de stopwords (você pode ampliar/alterar)
+// Pequena lista de stopwords (você pode ampliar/ajustar conforme necessidade)
 static const char* STOPWORDS[] = {
     "a","o","os","as","de","da","do","das","dos","e","ou","um","uma","uns","umas",
     "the","and","or","to","of","in","on","for","is","it","that","this","i","you",
@@ -22,11 +21,17 @@ static int is_stopword(const char *w) {
     return 0;
 }
 
+/* Normalização simples para minúsculas ASCII (sem tratar acento) */
 static void to_lower_ascii(char *s) {
     for (; *s; ++s) *s = (char)tolower((unsigned char)*s);
 }
 
-// Tokenizador simples: separa por não [a-z0-9]
+/*
+ * count_words:
+ *  - Copia o texto para um buffer temporário e põe tudo em minúsculas
+ *  - Percorre caractere a caractere, agrupando [a-z0-9] em tokens
+ *  - Ao fechar um token, verifica stopword e incrementa no HashMap
+ */
 static void count_words(HashMap *map, const char *text) {
     size_t n = strlen(text);
     char *tmp = (char*)malloc(n+1);
@@ -38,25 +43,25 @@ static void count_words(HashMap *map, const char *text) {
         char c = *p;
         int is_alnum = (c && ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')));
         if (is_alnum) {
-            if (!start) start = p;
+            if (!start) start = p;      // início de um token
         } else {
             if (start) {
-                char saved = *p;
+                char saved = *p;        // fecha token temporariamente
                 *p = '\0';
                 if (!is_stopword(start)) {
                     h_add(map, start, 1);
                 }
-                *p = saved;
+                *p = saved;             // restaura caractere
                 start = NULL;
             }
-            if (c == '\0') break;
+            if (c == '\0') break;       // fim da string
         }
         p++;
     }
     free(tmp);
 }
 
-// Serializa HashMap em "key\tcount\n" para enviar ao rank 0
+/* Buffer dinâmico para serializar o HashMap como linhas "key\tcount\n" */
 typedef struct { char *buf; size_t len; size_t cap; } SBuf;
 
 static void sb_init(SBuf *s) { s->buf=NULL; s->len=0; s->cap=0; }
@@ -94,18 +99,19 @@ int main(int argc, char **argv) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
+    // Tabela hash local por processo (mais buckets porque há muitas palavras distintas)
     HashMap *local = h_new(1<<15); // 32768 buckets
 
     char line[LINE_MAX];
     long long lineno = 0;
     while (fgets(line, sizeof(line), f)) {
-        // round-robin por linha
+        // round-robin por linha (balanceia leitura sem cortar registros)
         if ((lineno % size) == rank) {
             // Formato: artist \t text
             char *tab = strchr(line, '\t');
             if (!tab) { lineno++; continue; }
             char *text = tab + 1;
-            // remove \n final
+            // remove \n/\r finais, se houver
             size_t L = strlen(text);
             if (L && (text[L-1] == '\n' || text[L-1]=='\r')) text[L-1]='\0';
             count_words(local, text);
@@ -114,11 +120,10 @@ int main(int argc, char **argv) {
     }
     fclose(f);
 
-    // Serializa parciais
+    // Serializa parciais (cada processo manda seu buffer ao root)
     SBuf sb; sb_init(&sb);
     h_foreach(local, emit_kv, &sb);
 
-    // Comunicação: todos enviam seu buffer para o rank 0
     int mylen = (int)sb.len;
     int *lens = NULL;
     if (rank==0) lens = (int*)calloc(size, sizeof(int));
@@ -138,21 +143,19 @@ int main(int argc, char **argv) {
     double t1 = MPI_Wtime();
 
     if (rank==0) {
-        // Merge no root
+        // Merge global no root: reconstrói pares (key,count) e acumula no HashMap final
         HashMap *global = h_new(1<<16);
         int offset = 0;
         for (int r=0; r<size; ++r) {
             int L = lens[r];
             int end = offset + L;
             while (offset < end) {
-                // linha "key \t count \n"
+                // Cada linha no formato "key \t count \n"
                 char *lineptr = recvbuf + offset;
-                // encontra '\n'
                 char *nl = memchr(lineptr, '\n', end - offset);
                 int linelen = (int)(nl ? (nl - lineptr) : (end - offset));
                 if (linelen <= 0) { offset = nl? (nl+1 - recvbuf) : end; continue; }
 
-                // separa tab
                 char *tab = memchr(lineptr, '\t', linelen);
                 if (tab) {
                     int klen = (int)(tab - lineptr);
@@ -170,7 +173,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Salva CSV: palavra;count
+        // Salva CSV final (palavra;contagem)
         FILE *fo = fopen(outfile, "w");
         if (!fo) {
             fprintf(stderr, "Erro abrindo %s para escrita\n", outfile);
@@ -189,6 +192,7 @@ int main(int argc, char **argv) {
                 lineno, size, (t1 - t0));
     }
 
+    // limpeza
     free(lens); free(displs); free(recvbuf);
     free(sb.buf);
     h_free(local);
