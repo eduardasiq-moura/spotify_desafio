@@ -135,9 +135,46 @@ python3 src/sentiment_hf.py   --model lxyuan/distilbert-base-multilingual-cased-
 
 ---
 
-## 📊 5) Métricas de desempenho (para o relatório)
+# 📊 5) Análise de Métricas de Desempenho (MPI)
 
-Meça o tempo dos programas MPI com diferentes números de processos `P`:
+As métricas de desempenho foram calculadas com base no **Tempo Total de Execução** ($T_p$) em função do número de processos ($P$), comparando o tempo de execução paralela com o tempo sequencial ($T_1$).
+
+### 🧮 Fórmulas Utilizadas:
+
+- **Speedup** ($S_p$):  
+  $$
+  S_p = \frac{T_1}{T_p}
+  $$
+
+- **Eficiência** ($E_p$):  
+  $$
+  E_p = \frac{S_p}{P}
+  $$
+
+### 1. Desempenho da Contagem de Palavras (`mpi_wordcount`)
+
+| **P (Processos)** | **$T_p$ (Tempo Total)** | **Speedup ($S_p$)** | **Eficiência ($E_p$)** | **Ponto Ótimo** |
+|:-----------------:|:----------------------:|:-------------------:|:----------------------:|:---------------:|
+| 1  | 107.444s | 1.00x | 1.00 | - |
+| 2  | 33.184s  | 3.24x | 1.62 | - |
+| **4**  | **26.520s** | **4.05x** | **1.01** | ✅ |
+| 6  | 32.416s  | 3.31x | 0.55 | - |
+| 12 | 54.704s  | 1.96x | 0.16 | - |
+
+**Conclusão:** A tarefa de contagem de palavras atinge seu melhor desempenho com 4 processos, alcançando um Speedup de 4.05x. A eficiência de 1.01 (próxima do ideal 1.00) indica que, nessa configuração, o custo de comunicação é minimizado. A partir de P=6, o overhead do MPI e a sobrecarga de comunicação começam a prejudicar os ganhos.
+
+### 2. Desempenho da Contagem de Artistas (`mpi_artistcount`)
+
+| **P (Processos)** | **$T_p$ (Tempo Total)** | **Speedup ($S_p$)** | **Eficiência ($E_p$)** | **Ponto Ótimo** |
+|:-----------------:|:----------------------:|:-------------------:|:----------------------:|:---------------:|
+| 1  | 108.739s | 1.00x | 1.00 | - |
+| **2**  | **19.541s** | **5.56x** | **2.78** | ✅ |
+| 4  | 33.839s  | 3.21x | 0.80 | - |
+| 6  | 35.988s  | 3.02x | 0.50 | - |
+| 12 | 56.166s  | 1.94x | 0.16 | - |
+
+**Conclusão:** A tarefa de contagem dos artistas, mostra uma forte escalabilidade inicial, atingindo o **pico de desempenho** com apenas **2 processos** (Speedup de **5.56x**). O valor de Eficiência ($E_p = 2.78$) é **superlinear** ($E_p > 1$), o que geralmente indica que o aumento da memória total de cache disponível para os processos resultou em uma redução significativa no tempo de acesso a dados, beneficiando o desempenho muito além do esperado.   No entanto, o ganho desaparece rapidamente em $P = 4$ e configurações maiores.
+
 
 ```bash
 # exemplo com wordcount
@@ -156,8 +193,6 @@ mpirun --oversubscribe -np 12 ./build/mpi_artistcount
 
 ```
 
-- **Speedup**: `S(P) = T1 / TP`
-- **Eficiência**: `E(P) = S(P) / P`
 
 ---
 
