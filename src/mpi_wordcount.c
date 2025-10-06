@@ -8,19 +8,6 @@
 #define LINE_MAX 131072  // buffer por linha (128KB)
 #define BUF_CHUNK 65536  // bloco para crescer o buffer de serialização
 
-// Pequena lista de stopwords (você pode ampliar/ajustar conforme necessidade)
-static const char* STOPWORDS[] = {
-    "a","o","os","as","de","da","do","das","dos","e","ou","um","uma","uns","umas",
-    "the","and","or","to","of","in","on","for","is","it","that","this","i","you",
-    NULL
-};
-
-static int is_stopword(const char *w) {
-    for (int i = 0; STOPWORDS[i]; ++i)
-        if (strcmp(w, STOPWORDS[i]) == 0) return 1;
-    return 0;
-}
-
 /* Normalização simples para minúsculas ASCII (sem tratar acento) */
 static void to_lower_ascii(char *s) {
     for (; *s; ++s) *s = (char)tolower((unsigned char)*s);
@@ -29,8 +16,12 @@ static void to_lower_ascii(char *s) {
 /*
  * count_words:
  *  - Copia o texto para um buffer temporário e põe tudo em minúsculas
- *  - Percorre caractere a caractere, agrupando [a-z0-9] em tokens
- *  - Ao fechar um token, verifica stopword e incrementa no HashMap
+ *  - Percorre caractere a caractere, agrupando [a-z0-9'] em tokens
+ *  - Ao fechar um token, incrementa no HashMap
+ *
+ * Mudança da versão anterior:
+ * - Agora o apóstrofo (') faz parte da palavra → preserva contrações (“don’t”)
+ * - Stopwords foram removidas (conta tudo, inclusive “the”, “and”, “to”, etc.)
  */
 static void count_words(HashMap *map, const char *text) {
     size_t n = strlen(text);
@@ -41,16 +32,15 @@ static void count_words(HashMap *map, const char *text) {
     char *p = tmp, *start = NULL;
     while (1) {
         char c = *p;
-        int is_alnum = (c && ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')));
+        // inclui letras, dígitos e apóstrofos (para manter contrações)
+        int is_alnum = (c && ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c=='\''));
         if (is_alnum) {
             if (!start) start = p;      // início de um token
         } else {
             if (start) {
                 char saved = *p;        // fecha token temporariamente
                 *p = '\0';
-                if (!is_stopword(start)) {
-                    h_add(map, start, 1);
-                }
+                h_add(map, start, 1);   // adiciona token diretamente (sem filtro de stopwords)
                 *p = saved;             // restaura caractere
                 start = NULL;
             }
@@ -99,7 +89,7 @@ int main(int argc, char **argv) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    // Tabela hash local por processo (mais buckets porque há muitas palavras distintas)
+    // Tabela hash local por processo
     HashMap *local = h_new(1<<15); // 32768 buckets
 
     char line[LINE_MAX];

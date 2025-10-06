@@ -26,7 +26,7 @@ def main():
         for row in reader:
             artist = (row.get("artist") or "").strip()
             # Se houver TABs no texto, trocamos por espaço para não quebrar o TSV
-            text = (row.get("text") or "").replace("\t", " ").strip()
+            text = (row.get("text") or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
             # Linha TSV: artist \t text \n
             fout.write(f"{artist}\t{text}\n")
             total += 1

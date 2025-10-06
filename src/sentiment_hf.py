@@ -86,7 +86,7 @@ def _normalize_label_to_pt(label_raw: str) -> str:
         'neu': 'Neutra',
         'negative': 'Negativa',
         'neg': 'Negativa',
-        'label_0': 'Negativa', // alguns modelos indexados
+        'label_0': 'Negativa',
         'label_1': 'Neutra',
         'label_2': 'Positiva',
     }

@@ -141,10 +141,19 @@ Meça o tempo dos programas MPI com diferentes números de processos `P`:
 
 ```bash
 # exemplo com wordcount
-mpirun -np 1 ./build/mpi_wordcount
-mpirun -np 2 ./build/mpi_wordcount
-mpirun -np 4 ./build/mpi_wordcount
-mpirun -np 8 ./build/mpi_wordcount
+mpirun --oversubscribe -np 1  ./build/mpi_wordcount
+mpirun --oversubscribe -np 2  ./build/mpi_wordcount
+mpirun --oversubscribe -np 4  ./build/mpi_wordcount
+mpirun --oversubscribe -np 6  ./build/mpi_wordcount
+mpirun --oversubscribe -np 12 ./build/mpi_wordcount
+
+# exemplo com artistcount
+mpirun --oversubscribe -np 1  ./build/mpi_artistcount
+mpirun --oversubscribe -np 2  ./build/mpi_artistcount
+mpirun --oversubscribe -np 4  ./build/mpi_artistcount
+mpirun --oversubscribe -np 6  ./build/mpi_artistcount
+mpirun --oversubscribe -np 12 ./build/mpi_artistcount
+
 ```
 
 - **Speedup**: `S(P) = T1 / TP`
